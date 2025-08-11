@@ -4,10 +4,16 @@ set(CMAKE_CXX_STANDARD 17)
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
-find_package(Boost   REQUIRED COMPONENTS python)
+find_package(Python3 REQUIRED COMPONENTS Development)
+find_package(Boost REQUIRED COMPONENTS
+  python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
+  numpy${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
+)
 find_package(eigenpy REQUIRED)
 find_package(rclcpp  REQUIRED)
 find_package(rclpy  REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc)
+find_package(cv_bridge REQUIRED)
 
 add_library(bindings SHARED 
             src/bindings.cpp
@@ -21,12 +27,16 @@ target_include_directories(bindings PUBLIC
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
                            $<INSTALL_INTERFACE:include>
                            ${Boost_INCLUDE_DIRS} 
-                           ${eigenpy_INCLUDE_DIRS})
+                           ${eigenpy_INCLUDE_DIRS}
+                           ${OpenCV_INCLUDE_DIRS})
 
 target_link_libraries(bindings PUBLIC
-                      ${Boost_LIBRARIES} 
+                      Boost::python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
+                      Boost::numpy${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
+                      Python3::Python 
                       eigenpy::eigenpy 
-                      rclcpp::rclcpp)
+                      rclcpp::rclcpp
+                      ${OpenCV_LIBS})
 
 add_library(mujoco_ros_sim::bindings ALIAS bindings)
 
@@ -35,9 +45,13 @@ install(DIRECTORY   include/
 
 ament_python_install_package(mujoco_ros_sim)
 
-install(PROGRAMS    ${CMAKE_CURRENT_SOURCE_DIR}/mujoco_ros_sim/mujoco_ros_sim.py
+install(PROGRAMS    ${CMAKE_CURRENT_SOURCE_DIR}/mujoco_ros_sim/mujoco_sim.py
         DESTINATION lib/${PROJECT_NAME}
-        RENAME      mujoco_ros_sim)
+        RENAME      mujoco_sim)
+
+install(PROGRAMS    ${CMAKE_CURRENT_SOURCE_DIR}/mujoco_ros_sim/mujoco_controller.py
+        DESTINATION lib/${PROJECT_NAME}
+        RENAME      mujoco_controller)
 
 install(TARGETS bindings
         EXPORT  mujoco_ros_simTargets

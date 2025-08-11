@@ -3,13 +3,10 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include "mujoco_ros_sim/JointDict.hpp"
 #include <rclcpp/rclcpp.hpp>
 
 class ControllerInterface;
-using JointDict = mujoco_ros_sim::JointDict;
-using ControllerFactory =
-        std::function<std::unique_ptr<ControllerInterface>(double, JointDict)>;
+using ControllerFactory = std::function<std::unique_ptr<ControllerInterface>()>;
 
 class ControllerRegistry
 {
@@ -33,17 +30,17 @@ inline void ensure_rclcpp()
 }
 
 
-#define REGISTER_MJ_CONTROLLER(CLS, NAME)                                       \
-  namespace                                                                     \
-  {                                                                             \
-    std::unique_ptr<ControllerInterface> factory_##CLS(double dt, JointDict jd) \
-    {                                                                           \
-      ensure_rclcpp();                                                          \
-      auto node = rclcpp::Node::make_shared(std::string(NAME));                 \
-      return std::make_unique<CLS>(node, dt, std::move(jd));                    \
-    }                                                                           \
-    const bool registered_##CLS = [](){                                         \
-      ControllerRegistry::instance().add(NAME, factory_##CLS);                  \
-      return true;                                                              \
-    }();                                                                        \
+#define REGISTER_MJ_CONTROLLER(CLS, NAME)                      \
+  namespace                                                    \
+  {                                                            \
+    std::unique_ptr<ControllerInterface> factory_##CLS()       \
+    {                                                          \
+      ensure_rclcpp();                                         \
+      auto node = rclcpp::Node::make_shared(std::string(NAME));\
+      return std::make_unique<CLS>(node);                      \
+    }                                                          \
+    const bool registered_##CLS = [](){                        \
+      ControllerRegistry::instance().add(NAME, factory_##CLS); \
+      return true;                                             \
+    }();                                                       \
   }

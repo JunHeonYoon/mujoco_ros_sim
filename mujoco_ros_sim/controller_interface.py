@@ -3,10 +3,9 @@ from typing import Dict, Any
 
 
 class ControllerInterface:
-    def __init__(self, node: Node, dt: float, mj_joint_dict: Dict[str, Any]):
+    def __init__(self, node: Node):
         self.node = node
-        self.dt   = dt
-        self.mj_joint_dict = mj_joint_dict
+        self.dt   = 0.001  # Default time step, can be overridden by subclasses
 
     def starting(self) -> None:
         raise NotImplementedError
@@ -20,9 +19,15 @@ class ControllerInterface:
         current_time: float
     ) -> None:
         raise NotImplementedError
-
+    
+    def updateRGBDImage(self, rgbd_dict: Dict[str, Any]) ->None:
+        pass
+        
     def compute(self) -> None:
         raise NotImplementedError
 
     def getCtrlInput(self) -> Dict[str, float]:
         raise NotImplementedError
+    
+    def getCtrlTimeStep(self) -> float:
+        return float(self.dt)

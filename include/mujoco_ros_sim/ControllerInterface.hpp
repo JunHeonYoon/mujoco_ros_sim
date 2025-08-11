@@ -5,85 +5,78 @@
 #include <string>
 #include <vector>
 #include <Eigen/Dense>
-#include "mujoco_ros_sim/JointDict.hpp"
+#include <opencv2/core.hpp>
 #include "mujoco_ros_sim/ControllerRegistry.hpp"
 
 using Vec          = Eigen::VectorXd;
 using VecMap       = std::unordered_map<std::string, Vec>;
+using VecMap       = std::unordered_map<std::string, Vec>;
 using CtrlInputMap = std::unordered_map<std::string, double>;
-using JointDict    = mujoco_ros_sim::JointDict;
+using ImageCVMap   = std::unordered_map<std::string, cv::Mat>;
 
 /**
- * @brief Base class for C++ controllers in the mujoco_ros_sim package.
+ * @brief Minimal controller interface for mujoco_ros_sim.
  *
- * Instances are created (or wrapped) by the Python MujocoSimNode and
- * driven from its simulation loop.  At each mj_step, Python calls:
- *   1. updateState(...) with the latest qpos, qvel, external torques, sensor data, and sim time
- *   2. starting() once on the very first step
- *   3. compute() to form the control law
- *   4. getCtrlInput() to retrieve actuator commands, which Python then writes into mjData.ctrl[]
- */
+ * Tick order per control cycle:
+ *   1) updateState(...)
+ *   2) starting()            // first tick only
+ *   3) compute()
+ *   4) getCtrlInput()
+ *
+ * Implement in derived classes: starting(), updateState(), compute(), getCtrlInput().
+ * Optional to override: updateRGBDImage().
+*/
 class ControllerInterface
 {
 public:
-   /**
-   * @brief Construct a new ControllerInterface.
+  /**
+   * @brief Construct with a ROS 2 node handle.
    *
-   * The Python MujocoSimNode passes itself as the rclcpp::Node,
-   * the Mujoco timestep, and the JointDict it built from the MJCF model.
-   * This constructor will:
-   *   - store the node handle for parameters or publishers,
-   *   - record the simulation dt,
-   *   - keep the joint metadata,
-   *   - start a ROS 2 executor thread so callbacks (if any) run concurrently.
+   * @param node (rclcpp::Node::SharedPtr) Node to access parameters, pubs/subs, services.
    *
-   * @param[in] node Shared pointer to the ROS 2 node provided by Python.
-   * @param[in] dt   Mujoco simulation time step (seconds).
-   * @param[in] jd   JointDict with joint/actuator name‐to‐index maps.
-   */
-  ControllerInterface(const rclcpp::Node::SharedPtr& node,
-                      double dt,
-                      JointDict jd)
+   * What you do here (in your derived constructor):
+   * - Optionally declare/read parameters and set dt_ if you need a custom control period.
+   * - Create publishers/subscriptions if your controller needs them.
+  */
+  ControllerInterface(const rclcpp::Node::SharedPtr& node)
     : node_(node)
-    , dt_(dt)
-    , mj_joint_dict_(std::move(jd))
   {
-    // Attach node to executor and start spinning in its own thread
     exec_.add_node(node_);
-    spin_thread_ = std::thread([this]
-    {
-      // Spin at 5000 Hz to process ROS 2 callbacks promptly
+    spin_thread_ = std::thread([this]{
       rclcpp::Rate rate(5000.0);
-      while (running_)
-      {
-        exec_.spin_some();
-        rate.sleep();
-      }
+      while (running_) { exec_.spin_some(); rate.sleep(); }
     });
   }
 
   virtual ~ControllerInterface() = default;
 
   /**
-   * @brief Called exactly once on the first simulation step.
+   * @brief One-time initialization hook (first control tick only).
    *
-   * Invoked by the Python loop before the first compute() call,
-   * allowing you to read ROS 2 parameters, allocate buffers,
-   * or perform one‐time initialization.
-   */
+   * What to do:
+   * - Allocate buffers, precompute constants, read/validate parameters.
+   * - Initialize estimators/filters/integrators.
+  */
   virtual void starting() = 0;
 
   /**
-   * @brief Update the controller’s internal state from simulation data.
+   * @brief Provide the latest simulator state.
    *
-   * Called every mj_step by Python before compute().
+   * @param pos      (VecMap) joint name (std::string) -> joint position (Eigen::VectorXd) map.
+   *                 Each vector size matches that joint’s DOF in qpos.
+   * @param vel      (VecMap) joint name (std::string) -> joint velocity (Eigen::VectorXd) map.
+   *                 Each vector size matches that joint’s DOF in qvel.
+   * @param tau_ext  (VecMap) joint name (std::string) -> joint effort/torque (Eigen::VectorXd) map
+   *                 as published by the simulator integration (e.g., actuator effort).
+   * @param sensors  (VecMap) sensor name (std::string) -> raw sensor vector (Eigen::VectorXd) map
+   *                 sliced from sensordata.
+   * @param sim_time (double) simulation time in seconds.
    *
-   * @param[in] pos       Map of joint name → current position vector (from mjData.qpos).
-   * @param[in] vel       Map of joint name → current velocity vector (from mjData.qvel).
-   * @param[in] tau_ext   Map of joint name → applied external torque (from mjData.qfrc_applied).
-   * @param[in] sensors   Map of sensor name → raw sensor array (from mjData.sensordata).
-   * @param[in] sim_time  Current simulation time (from mjData.time).
-   */
+   * What to do:
+   * - Copy/consume only what you need into your internal state (keep this fast).
+   * - Do NOT block or perform heavy optimization here; defer to compute().
+   * - If you share state with other callbacks (e.g., images), guard with a mutex.
+  */
   virtual void updateState(const VecMap& pos,
                            const VecMap& vel,
                            const VecMap& tau_ext,
@@ -91,32 +84,58 @@ public:
                            double sim_time) = 0;
 
   /**
-   * @brief Compute the control commands based on the most recent state.
+   * @brief Optional RGB-D/image update (runs ~cam_fps from /mujoco_sim_node/camera_fps).
    *
-   * Called every mj_step by Python after updateState().
-   * Use your stored state plus any internal variables to formulate
-   * the desired outputs (e.g., torques, velocity setpoints).
-   */
+   * @param rgbd (ImageCVMap) image stream name (std::string) -> OpenCV image
+   *             (cv::Mat). 
+   *
+   * What to do:
+   * - Perform lightweight preprocessing or store references/copies for use in compute().
+   * - It’s fine to leave this unimplemented if your controller doesn’t use images.
+  */
+  virtual void updateRGBDImage(const ImageCVMap& images) {}
+
+  /**
+   * @brief Compute control outputs using the most recent inputs.
+   *
+   * What to do:
+   * - Implement your control law (e.g., PID/impedance/MPC/etc.).
+   * - Use the state cached in updateState()/updateRGBDImage().
+   * - Store results internally so getCtrlInput() can return them immediately.
+   * - Keep this bounded in time; it runs every control tick.
+  */
   virtual void compute() = 0;
 
   /**
-   * @brief Retrieve the control inputs computed in compute().
+   * @brief Retrieve actuator commands computed by compute().
    *
-   * Called every mj_step by Python after compute().
-   * The returned map (actuator name → command value) is applied directly to
-   * mjData.ctrl in the Python simulation loop.
+   * @return (CtrlInputMap) actuator name (std::string) -> command value (double).
    *
-   * @return CtrlInputMap Map of actuator name → control command.
-   */
+   * What to do:
+   * - Return finite, valid commands for all actuators you control.
+   * - Do not allocate excessively; prefer returning a cached map updated in compute().
+   * - Units should match the simulator’s actuator model (e.g., torque/position/velocity).
+  */
   virtual CtrlInputMap getCtrlInput() const = 0;
 
+  /**
+   * @brief Desired control period used by the runner.
+   *
+   * @return (double) control timestep in seconds. Default: 0.001 (1 kHz).
+   *
+   * What to do:
+   * - If you need a different rate, set dt_ (e.g., in your constructor or starting()).
+   * - Choose a period your compute() can reliably meet on your target CPU.
+  */
+  const double getCtrlTimeStep() const { return dt_; }
+
 protected:
-  rclcpp::Node::SharedPtr node_;           // ROS 2 node for parameters, topics, services
-  double                  dt_;             // Simulation time step (s)
-  JointDict               mj_joint_dict_;  // Metadata for Mujoco joints
+  rclcpp::Node::SharedPtr node_;       // ROS 2 node handle
+  double                  dt_{0.001};  // Control period [s]
 
 private:
-  rclcpp::executors::SingleThreadedExecutor exec_;          // Executor spinning callbacks
-  std::thread                               spin_thread_;   // Background spin thread
-  std::atomic_bool                          running_{true}; // Flag to keep spin thread alive
+  // Internal: ROS executor thread for this node (no action required by users).
+  rclcpp::executors::SingleThreadedExecutor exec_;
+  std::thread                               spin_thread_;
+  std::atomic_bool                          running_{true};
 };

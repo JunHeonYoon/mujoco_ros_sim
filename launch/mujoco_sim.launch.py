@@ -10,28 +10,19 @@ def generate_launch_description():
         description='Name of the robot model to be used in MuJoCo'
     )
 
-    controller_class_arg = DeclareLaunchArgument(
-        'controller_class',
-        default_value='',
-        description='Full Python path of the controller class to load (e.g. my_pkg.my_controller.MyController)'
-    )
-
     robot_name = LaunchConfiguration('robot_name')
-    controller_class = LaunchConfiguration('controller_class')
 
     sim_node = Node(
         package='mujoco_ros_sim',      
-        executable='mujoco_ros_sim',   
+        executable='mujoco_sim',   
         name='mujoco_sim_node',
         output='screen',
         parameters=[{
-            'robot_name': robot_name,
-            'controller_class': controller_class,
+            'robot_name': robot_name
         }]
     )
 
     return LaunchDescription([
         robot_name_arg,
-        controller_class_arg,
         sim_node
     ])

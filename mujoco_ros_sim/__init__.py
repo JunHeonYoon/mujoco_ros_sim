@@ -72,4 +72,4 @@ sys.meta_path.insert(0, _PluginPatchFinder())
 _auto_scan()
 
 from .controller_interface import ControllerInterface
-from .mujoco_ros_sim       import MujocoSimNode
+from .mujoco_sim       import MujocoSimNode

@@ -4,6 +4,12 @@ from ament_index_python.packages import get_package_share_directory
 import time
 import importlib
 from rclpy.node import Node
+import numpy as np
+import math
+from std_msgs.msg import Float64MultiArray, MultiArrayDimension, MultiArrayLayout
+from sensor_msgs.msg import Image
+from builtin_interfaces.msg import Time
+from mujoco_ros_sim_msgs.msg import NamedFloat64Array
 
 def load_mj_model(robot_name) -> mujoco.MjModel:
     """
@@ -243,3 +249,87 @@ def print_table(node: Node, m: mujoco.MjModel):
         node.get_logger().info(
             f"{sid:3d} | {name:27s} | {tstr:16s} | {dim:3d} | {sadr:3d} | {target}"
         )
+
+      # ---------- Camera table (id, name, mode, resolution) ----------
+    node.get_logger().info("")
+
+    chdr = " id | name                        | mode     | resolution"
+    csep = "----+-----------------------------+----------+------------"
+    node.get_logger().info(chdr)
+    node.get_logger().info(csep)
+
+    # mode enum → 문자열 매핑 (가능하면 자동 추출, 없으면 기본 매핑)
+    mode_map = {}
+    cam_enum = getattr(mujoco, "mjtCamLight", None)
+    if cam_enum is not None:
+        for attr in dir(cam_enum):
+            if attr.startswith("mjCAMLIGHT_"):
+                # mjCAMLIGHT_FIXED -> Fixed
+                mode_map[getattr(cam_enum, attr)] = attr[10:].title()
+    else:
+        # fallback (주요 모드)
+        mode_map = {0: "Fixed", 1: "Track", 2: "Trackcom"}
+
+    # 해상도: MuJoCo는 per-camera 해상도가 아니라 global offscreen 설정을 사용
+    try:
+        offw = int(m.vis.global_.offwidth)
+        offh = int(m.vis.global_.offheight)
+        res_str = f"{offw}x{offh}" if offw > 0 and offh > 0 else "-"
+    except Exception:
+        res_str = "-"
+
+    ncam = getattr(m, "ncam", 0)
+    for cid in range(ncam):
+        # name
+        cadr  = m.name_camadr[cid]
+        cname = m.names[cadr:].split(b'\x00', 1)[0].decode()
+
+        # mode
+        if hasattr(m, "cam_mode"):
+            try:
+                mode_val = int(m.cam_mode[cid])
+                mode_str = mode_map.get(mode_val, str(mode_val))
+            except Exception:
+                mode_str = "-"
+        else:
+            mode_str = "-"
+
+        node.get_logger().info(f"{cid:3d} | {cname:27s} | {mode_str:8s} | {res_str}")
+        
+def to_NamedFloat64ArrayMsg(name: str, data):
+    arr = np.array(data, dtype=float).ravel() # flatten to 1D array
+    msg = NamedFloat64Array()
+    msg.name = name
+    fa = Float64MultiArray()
+    fa.layout = MultiArrayLayout(dim=[MultiArrayDimension(label="", size=arr.size, stride=arr.size)], data_offset=0)
+    fa.data = arr.tolist()
+    msg.value = fa
+    return msg
+    
+def to_TimeMsg(time: float):
+    time_msg = Time()
+    time_msg.sec = int(math.floor(time))
+    time_msg.nanosec = int(round((time - time_msg.sec) * 1e9))
+    return time_msg
+
+def from_NamedFloat64ArrayMsg(item: NamedFloat64Array) -> np.ndarray:
+    a = np.array(item.value.data, dtype=float)
+    return a if a.size != 1 else a
+
+def image_to_numpy(img_msg: Image) -> np.ndarray:
+    h, w = int(img_msg.height), int(img_msg.width)
+    enc = img_msg.encoding.lower()
+    buf = memoryview(img_msg.data)
+    if enc in ("rgb8", "bgr8"):
+        arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 3)
+        if enc == "bgr8":
+            arr = arr[..., ::-1]
+        return arr
+    elif enc in ("mono8",):
+        return np.frombuffer(buf, dtype=np.uint8).reshape(h, w)
+    elif enc in ("32fc1",):
+        return np.frombuffer(buf, dtype=np.float32).reshape(h, w)
+    elif enc in ("32fc3",):
+        return np.frombuffer(buf, dtype=np.float32).reshape(h, w, 3)
+    else:
+        return np.frombuffer(buf, dtype=np.uint8)

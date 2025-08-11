@@ -3,7 +3,11 @@
 
 #include <boost/python.hpp>
 #include <boost/mpl/vector.hpp>
+#include <boost/python/numpy.hpp>
 #include <eigenpy/eigenpy.hpp>
+
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <dlfcn.h>
 #include <memory>
@@ -13,52 +17,11 @@
 #include "mujoco_ros_sim/ControllerRegistry.hpp"
 
 namespace bp = boost::python;
-using JointDict         = mujoco_ros_sim::JointDict;
+namespace np = boost::python::numpy;
 using ControllerSP      = std::shared_ptr<ControllerInterface>;
-using ControllerFactory = std::function<std::unique_ptr<ControllerInterface>(double, JointDict)>;
-using SigT              = boost::mpl::vector<ControllerSP, double, JointDict>;
+using ControllerFactory = std::function<std::unique_ptr<ControllerInterface>()>;
+using SigT              = boost::mpl::vector<ControllerSP>;
 
-
-struct JointDict_from_python
-{
-  static void* convertible(PyObject* obj)
-  { return PyMapping_Check(obj) ? obj : nullptr; }
-
-  static void construct(PyObject* obj, bp::converter::rvalue_from_python_stage1_data* data)
-  {
-    void* storage =
-        reinterpret_cast<bp::converter::rvalue_from_python_storage<JointDict>*>(data)
-        ->storage.bytes;
-    new (storage) JointDict;
-    JointDict& dst = *static_cast<JointDict*>(storage);
-
-    bp::dict py(bp::handle<>(bp::borrowed(obj)));
-
-    auto list2vec = [](const bp::object& lst, auto& vec)
-    {
-      using T = typename std::decay_t<decltype(vec)>::value_type;
-      bp::stl_input_iterator<T> it(lst), end;
-      vec.assign(it, end);
-    };
-    list2vec(py["joint_names"],    dst.joint_names);
-    list2vec(py["actuator_names"], dst.actuator_names);
-
-    auto dict2umap = [](const bp::dict& d, auto& map)
-    {
-      bp::list keys = d.keys();
-      for (long i = 0; i < bp::len(keys); ++i)
-      {
-        std::string k = bp::extract<std::string>(keys[i]);
-        int         v = bp::extract<int>(d[keys[i]]);
-        map[k] = v;
-      }
-    };
-    dict2umap(bp::extract<bp::dict>(py["jname_to_jid"]), dst.jname_to_jid);
-    dict2umap(bp::extract<bp::dict>(py["aname_to_aid"]), dst.aname_to_aid);
-
-    data->convertible = storage;
-  }
-};
 
 static VecMap pyDict_to_VecMap(const bp::dict &py)
 {
@@ -100,12 +63,72 @@ static bp::dict getCtrlInput_wrapper(const ControllerInterface &self)
   return map_to_pydict( self.getCtrlInput() );
 }
 
+static cv::Mat ndarray_to_mat(const np::ndarray& arr)
+{
+  // dtype/shape/stride
+  const int nd = arr.get_nd();
+  const Py_intptr_t* shp = arr.get_shape();
+  const Py_intptr_t* str = arr.get_strides();
+
+  // RGB8: (H,W,3) uint8
+  if (nd == 3 &&
+      arr.get_dtype() == np::dtype::get_builtin<uint8_t>() &&
+      shp[2] == 3)
+  {
+    int h = static_cast<int>(shp[0]);
+    int w = static_cast<int>(shp[1]);
+    // row stride(bytes) = str[0]
+    auto* data = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(arr.get_data()));
+    return cv::Mat(h, w, CV_8UC3, data, static_cast<size_t>(str[0]));
+  }
+
+  // MONO8: (H,W) uint8
+  if (nd == 2 && arr.get_dtype() == np::dtype::get_builtin<uint8_t>())
+  {
+    int h = static_cast<int>(shp[0]);
+    int w = static_cast<int>(shp[1]);
+    auto* data = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(arr.get_data()));
+    return cv::Mat(h, w, CV_8UC1, data, static_cast<size_t>(str[0]));
+  }
+
+  // DEPTH32F: (H,W) float32
+  if (nd == 2 && arr.get_dtype() == np::dtype::get_builtin<float>())
+  {
+    int h = static_cast<int>(shp[0]);
+    int w = static_cast<int>(shp[1]);
+    auto* data = const_cast<float*>(reinterpret_cast<const float*>(arr.get_data()));
+    return cv::Mat(h, w, CV_32FC1, data, static_cast<size_t>(str[0]));
+  }
+
+  PyErr_SetString(PyExc_TypeError, "Unsupported ndarray shape/dtype for cv::Mat");
+  bp::throw_error_already_set();
+  return {};
+}
+
+static ImageCVMap pydict_to_imagemap_cv(const bp::dict& d)
+{
+  ImageCVMap out;
+  bp::list keys = d.keys();
+  for (Py_ssize_t i = 0; i < bp::len(keys); ++i) 
+  {
+    bp::object k = keys[i];
+    std::string name = bp::extract<std::string>(k);
+    np::ndarray arr = bp::extract<np::ndarray>(d[k]);
+    out.emplace(name, ndarray_to_mat(arr));
+  }
+  return out;
+}
+
+static void updateRGBDImage_cv_wrapper(ControllerInterface& self, const bp::dict& rgbd)
+{
+  self.updateRGBDImage( pydict_to_imagemap_cv(rgbd) );
+}
+
 static void load_plugin_library(const std::string& path)
 {
   if (!dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL))
       throw std::runtime_error(dlerror());
 }
-
 
 static void export_new_factories()
 {
@@ -119,8 +142,8 @@ static void export_new_factories()
       continue;
 
     ControllerFactory fac = kv.second;
-    auto wrapper = [fac](double dt, JointDict jd)->ControllerSP
-    { return ControllerSP(fac(dt, std::move(jd)).release()); };
+    auto wrapper = [fac]()->ControllerSP
+    { return ControllerSP(fac().release()); };
 
     bp::object pyfunc = bp::make_function(wrapper,
                                       bp::default_call_policies(),
@@ -138,15 +161,16 @@ static void export_new_factories()
 BOOST_PYTHON_MODULE(bindings)
 {
   eigenpy::enableEigenPy();
+  np::initialize();
 
   bp::register_ptr_to_python< std::shared_ptr<ControllerInterface> >();
   bp::class_<ControllerInterface, std::shared_ptr<ControllerInterface>, boost::noncopyable >("ControllerInterface", bp::no_init)
-    .def("starting",      &ControllerInterface::starting)
-    .def("updateState",   &updateState_wrapper)
-    .def("compute",       &ControllerInterface::compute)
-    .def("getCtrlInput",  &getCtrlInput_wrapper);
-
-  bp::converter::registry::push_back(&JointDict_from_python::convertible, &JointDict_from_python::construct, bp::type_id<JointDict>());
+    .def("starting",        &ControllerInterface::starting)
+    .def("updateState",     &updateState_wrapper)
+    .def("updateRGBDImage", &updateRGBDImage_cv_wrapper)
+    .def("compute",         &ControllerInterface::compute)
+    .def("getCtrlInput",    &getCtrlInput_wrapper)
+    .def("getCtrlTimeStep", &ControllerInterface::getCtrlTimeStep);
 
   export_new_factories();
 

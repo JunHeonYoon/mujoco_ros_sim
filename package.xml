@@ -1,6 +1,6 @@
 <package format="3">
   <name>mujoco_ros_sim</name>
-  <version>0.2.0</version>
+  <version>0.3.0</version>
   <description>MuJoCo + ROS 2 hybrid simulator with C++ and Python controllers.</description>
 
   <maintainer email="yoonjh98@snu.ac.kr">Junheon Yoon</maintainer>
@@ -11,17 +11,20 @@
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <!-- core dependencies -->
-  <depend>boost</depend>          <!-- Boost.Python -->
+  <depend>boost</depend>
   <depend>eigenpy</depend>
   <depend>rclcpp</depend>
+  <depend>mujoco_ros_sim_msgs</depend>
+  <depend>cv_bridge</depend>
 
+  <build_depend>opencv</build_depend>
+  
   <!-- runtime (Python) -->
   <exec_depend>rclpy</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>opencv</exec_depend>
 
   <export>
-    <!-- <build_type>ament_python</build_type> -->
     <build_type>ament_cmake</build_type>
-    <!-- <build_type>ament_cmake_python</build_type> -->
   </export>
 </package>
