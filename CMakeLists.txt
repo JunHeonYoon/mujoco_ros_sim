@@ -4,7 +4,6 @@ set(CMAKE_CXX_STANDARD 17)
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
-find_package(Python3 REQUIRED COMPONENTS Development)
 find_package(Boost REQUIRED COMPONENTS
   python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
   numpy${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
@@ -33,7 +32,6 @@ target_include_directories(bindings PUBLIC
 target_link_libraries(bindings PUBLIC
                       Boost::python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
                       Boost::numpy${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
-                      Python3::Python 
                       eigenpy::eigenpy 
                       rclcpp::rclcpp
                       ${OpenCV_LIBS})

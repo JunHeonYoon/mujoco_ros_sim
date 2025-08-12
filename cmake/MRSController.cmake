@@ -11,7 +11,6 @@ function(mrs_add_controller TARGET)
   find_package(eigenpy REQUIRED)
   find_package(OpenCV REQUIRED COMPONENTS core imgproc)
   find_package(cv_bridge REQUIRED)
-  find_package(Python3 REQUIRED COMPONENTS Development)
   find_package(Boost REQUIRED COMPONENTS
     python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
     numpy${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
