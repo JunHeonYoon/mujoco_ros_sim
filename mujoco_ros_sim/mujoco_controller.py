@@ -69,10 +69,10 @@ class MujocoControllerNode(Node):
             imgs = {ni.name: image_to_numpy(ni.image) for ni in msg.images}
             self.controller.updateRGBDImage(imgs)
         except Exception as e:
-            self.get_logger().warn(f"image_cb error: {e}")
+            self.get_logger().warn(f"sub_image_cb error: {e}")
 
     def control_loop(self):
-        if self.latest_joint is None:
+        if self.latest_joint is None or self.latest_sensor is None:
             return
 
         t0 = time.perf_counter()
