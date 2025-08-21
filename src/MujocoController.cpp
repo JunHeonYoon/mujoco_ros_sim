@@ -59,39 +59,94 @@ ControllerNode::ControllerNode()
 
 void ControllerNode::init_controller() 
 {
-    // QoS setup
     rclcpp::QoS qos(rclcpp::KeepLast(10));
     qos.best_effort();
     qos.durability_volatile();
 
-    // 1) plugin load
-    auto factory = loader_.createSharedInstance(controller_class_);
-    controller_ = factory->create(shared_from_this());
-    RCLCPP_INFO(get_logger(), "%sController loaded: %s (dt=%.4f s)%s", cblue_, controller_class_.c_str(), controller_->getCtrlTimeStep(), creset_);
+    // ---- unify spec ----
+    // Always accept 'pkg/Class' for both C++ and Python.
+    // Try pluginlib first; if not available -> fallback to PyController with python_class="pkg:Class".
+    std::string spec = this->get_parameter("controller_class").as_string(); // already declared in ctor
 
-    // 2) period set
+    // Optional '@path' → python_path
+    std::string python_path;
+    if (auto at = spec.find('@'); at != std::string::npos) {
+        python_path = spec.substr(at + 1);
+        spec.erase(at);
+    }
+
+    // Decide load target
+    std::string plugin_to_load = spec;       // try as C++ plugin
+    std::string python_class;                // for fallback
+    bool use_python = false;
+
+    // If spec looks like 'pkg/Class' but plugin not found, fallback to Python
+    try 
+    {
+        // Fast check if available (prefer, if you have it)
+        if (!(loader_.isClassAvailable(spec))) use_python = true;
+    } 
+    catch (...) 
+    {
+        // Some loaders don’t expose isClassAvailable cleanly; ignore and try create
+    }
+
+    if (!use_python) 
+    {
+        try 
+        {
+            auto factory = loader_.createSharedInstance(plugin_to_load);
+            controller_  = factory->create(shared_from_this());
+        } 
+        catch (...) 
+        {
+            // Not a C++ plugin → Python fallback
+            use_python = true;
+        }
+    }
+
+    if (use_python) 
+    {
+        // Map 'pkg/Class' -> 'pkg:Class'
+        auto slash = spec.find('/');
+        if (slash == std::string::npos) throw std::runtime_error("controller_class must be 'pkg/Class' (got: " + spec + ")");
+        python_class = spec.substr(0, slash) + ":" + spec.substr(slash + 1);
+        plugin_to_load = "mujoco_ros_sim/PyController";
+
+        if (!this->has_parameter("python_class")) this->declare_parameter<std::string>("python_class", "");
+        if (!this->has_parameter("python_path"))  this->declare_parameter<std::string>("python_path", "");
+
+        // Set params for PyController (auto)
+        std::vector<rclcpp::Parameter> params;
+        params.emplace_back("python_class", rclcpp::ParameterValue(python_class));
+        if (!python_path.empty()) params.emplace_back("python_path",  rclcpp::ParameterValue(python_path));
+        this->set_parameters(params);
+
+        // Load PyController
+        auto factory = loader_.createSharedInstance(plugin_to_load);
+        controller_  = factory->create(shared_from_this());
+    }
+
+    RCLCPP_INFO(get_logger(), "%sController loaded: %s%s", cblue_, plugin_to_load.c_str(), creset_);
+
     const double dt = controller_->getCtrlTimeStep();
     period_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(dt));
 
-    // 3) groups
     timer_group_ = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
     sub_group_   = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
-    // 4) pubs/subs
     rclcpp::SubscriptionOptions opt;
     opt.callback_group = sub_group_;
-    joint_sub_  = create_subscription<JointDict>( "mujoco_ros_sim/joint_dict", qos, std::bind(&ControllerNode::jointCb, this, std::placeholders::_1), opt);
-    sensor_sub_ = create_subscription<SensorDict>( "mujoco_ros_sim/sensor_dict", qos, std::bind(&ControllerNode::sensorCb, this, std::placeholders::_1), opt);
-    image_sub_  = create_subscription<ImageDict>( "mujoco_ros_sim/image_dict", qos, std::bind(&ControllerNode::imageCb, this, std::placeholders::_1), opt);
+    joint_sub_  = create_subscription<JointDict>("mujoco_ros_sim/joint_dict", qos,
+                    std::bind(&ControllerNode::jointCb, this, std::placeholders::_1), opt);
+    sensor_sub_ = create_subscription<SensorDict>("mujoco_ros_sim/sensor_dict", qos,
+                    std::bind(&ControllerNode::sensorCb, this, std::placeholders::_1), opt);
+    image_sub_  = create_subscription<ImageDict>("mujoco_ros_sim/image_dict", qos,
+                    std::bind(&ControllerNode::imageCb, this, std::placeholders::_1), opt);
     ctrl_pub_   = create_publisher<CtrlDict>("mujoco_ros_sim/ctrl_dict", qos);
 
-    // 5) timer last
-    timer_ = create_wall_timer(
-            period_ns_,
-            std::bind(&ControllerNode::controlLoop, this),
-            timer_group_);
+    timer_ = create_wall_timer(period_ns_, std::bind(&ControllerNode::controlLoop, this), timer_group_);
 }
-
 
 void ControllerNode::jointCb(const JointDict::SharedPtr msg)
 {
@@ -221,17 +276,17 @@ void ControllerNode::controlLoop()
 
 int main(int argc, char** argv) 
 {
-  // init
-  rclcpp::init(argc, argv);
-  auto node = std::make_shared<ControllerNode>();
-  node->init_controller();
+    // init
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<ControllerNode>();
+    node->init_controller();
 
-  // executor
-  rclcpp::executors::MultiThreadedExecutor exec(rclcpp::ExecutorOptions(), 4);
-  exec.add_node(node);
-  exec.spin();
+    // executor
+    rclcpp::executors::MultiThreadedExecutor exec(rclcpp::ExecutorOptions(), 4);
+    exec.add_node(node);
+    exec.spin();
 
-  // shutdown
-  rclcpp::shutdown();
-  return 0;
+    // shutdown
+    rclcpp::shutdown();
+    return 0;
 }

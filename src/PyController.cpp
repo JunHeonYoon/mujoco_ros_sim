@@ -174,8 +174,19 @@ struct PyController::Impl
 PyController::PyController(const rclcpp::Node::SharedPtr& node)
 : ControllerInterface(node)
 {
-  const std::string py_class = node_->declare_parameter<std::string>("python_class", "");
-  const std::string py_path  = node_->declare_parameter<std::string>("python_path", "");
+  std::string py_class;
+  if (node_->has_parameter("python_class")) {
+    py_class = node_->get_parameter("python_class").as_string();
+  } else {
+    py_class = node_->declare_parameter<std::string>("python_class", "");
+  }
+
+  std::string py_path;
+  if (node_->has_parameter("python_path")) {
+    py_path = node_->get_parameter("python_path").as_string();
+  } else {
+    py_path = node_->declare_parameter<std::string>("python_path", "");
+  }
   if (py_class.empty()) throw std::runtime_error("PyController: parameter 'python_class' must be set (e.g. 'my_controller_py.my_controller:MyController')");
   promote_libpython_to_global();
   ensure_python();
