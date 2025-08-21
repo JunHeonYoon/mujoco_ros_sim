@@ -1,12 +1,18 @@
 #pragma once
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/node_interfaces/node_base_interface.hpp>
 #include <unordered_map>
 #include <string>
 #include <vector>
 #include <Eigen/Dense>
 #include <opencv2/core.hpp>
-#include "mujoco_ros_sim/ControllerRegistry.hpp"
+
+constexpr const char* cred_   = "\033[0;31m";
+constexpr const char* creset_ = "\033[0m";
+constexpr const char* cblue_  = "\033[0;34m";
+constexpr const char* cgreen_ = "\033[0;32m";
+constexpr const char* cyellow_= "\033[0;33m";
 
 using Vec          = Eigen::VectorXd;
 using VecMap       = std::unordered_map<std::string, Vec>;
@@ -39,14 +45,7 @@ public:
    * - Create publishers/subscriptions if your controller needs them.
   */
   ControllerInterface(const rclcpp::Node::SharedPtr& node)
-    : node_(node)
-  {
-    exec_.add_node(node_);
-    spin_thread_ = std::thread([this]{
-      rclcpp::Rate rate(5000.0);
-      while (running_) { exec_.spin_some(); rate.sleep(); }
-    });
-  }
+  : node_(node) {}
 
   virtual ~ControllerInterface() = default;
 
@@ -135,7 +134,5 @@ protected:
 
 private:
   // Internal: ROS executor thread for this node (no action required by users).
-  rclcpp::executors::SingleThreadedExecutor exec_;
-  std::thread                               spin_thread_;
-  std::atomic_bool                          running_{true};
+  std::atomic_bool running_{true};
 };

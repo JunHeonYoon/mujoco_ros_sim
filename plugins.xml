@@ -1,0 +1,7 @@
+<library path="MujocoControllerPlugins">
+  <class name="mujoco_ros_sim/PyController"
+         type="PyControllerFactory"
+         base_class_type="ControllerFactory">
+    <description>Python-backed controller adapter.</description>
+  </class>
+</library>

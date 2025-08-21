@@ -3,7 +3,6 @@ import os
 from ament_index_python.packages import get_package_share_directory
 import time
 import importlib
-from rclpy.node import Node
 import numpy as np
 import math
 from std_msgs.msg import Float64MultiArray, MultiArrayDimension, MultiArrayLayout
@@ -228,7 +227,6 @@ def print_table(robot_name: str, m: mujoco.MjModel) -> str:
     lines.append("=================================================================")
     return "\n".join(lines)
 
-        
 def to_NamedFloat64ArrayMsg(name: str, data):
     arr = np.array(data, dtype=float).ravel() # flatten to 1D array
     msg = NamedFloat64Array()
@@ -266,3 +264,80 @@ def image_to_numpy(img_msg: Image) -> np.ndarray:
         return np.frombuffer(buf, dtype=np.float32).reshape(h, w, 3)
     else:
         return np.frombuffer(buf, dtype=np.uint8)
+
+
+class PreciseSleeper:
+    def __init__(self, sample=1e-3, pessimism=1.0):
+        self.sample = sample
+        self.pess   = pessimism
+        self.n = 1
+        self.mean = 5e-3
+        self.m2 = 0.0
+        self.est = self.mean
+
+    def _upd(self, obs):
+        self.n += 1
+        d = obs - self.mean
+        self.mean += d / self.n
+        self.m2   += d * (obs - self.mean)
+        if self.n > 1:
+            std = math.sqrt(self.m2 / (self.n - 1))
+            self.est = self.mean + self.pess * std
+        else:
+            self.est = self.mean
+
+    @staticmethod
+    def _spin(sec):
+        if sec <= 0: return
+        end = time.perf_counter_ns() + int(sec * 1e9)
+        while time.perf_counter_ns() < end:
+            pass
+
+    def coarse(self, remain):
+        """remain 초 남았을 때, oversleep을 피하며 coarse sleep."""
+        while remain - self.est > 1e-6:
+            t0 = time.perf_counter_ns()
+            time.sleep(self.sample)
+            obs = (time.perf_counter_ns() - t0)/1e9
+            remain -= obs
+            self._upd(obs)
+        return remain  # 남은 꼬리는 spin
+
+class AccuratePeriodic:
+    """절대 데드라인 기반 + overshoot 예측"""
+    def __init__(self, period_s: float):
+        self.period_ns = int(period_s * 1e9)
+        self.deadline  = time.perf_counter_ns() + self.period_ns
+        self.sleeper   = PreciseSleeper(sample=1e-3, pessimism=1.0)
+
+        # 스케줄링 오버헤드(조기 기상 오차) EWMA 추정치 (us 단위)
+        self.bias_us = 0.0
+        self.alpha = 0.1  # EWMA 계수
+
+    def wait_next(self) -> float:
+        # oversleep/오버헤드 보정만큼 "조금 일찍" 깨우기
+        target_ns = self.deadline - int(max(0.0, self.bias_us) * 1e3)
+
+        while True:
+            now = time.perf_counter_ns()
+            remain_ns = target_ns - now
+            if remain_ns <= 0:
+                break
+            remain = remain_ns / 1e9
+            remain = self.sleeper.coarse(remain)  # sleep(1ms) 반복
+            self.sleeper._spin(remain)            # 꼬리 spin
+
+
+        wake = time.perf_counter_ns()
+        # 실제 데드라인 기준 늦잠(+): us
+        lateness_us = (wake - self.deadline) / 1e3
+
+        # 다음 데드라인으로 전진 (드리프트 없음)
+        self.deadline += self.period_ns
+        if wake > self.deadline:
+            miss = (wake - self.deadline) // self.period_ns + 1
+            self.deadline += miss * self.period_ns
+
+        # bias 업데이트: "얼마나 일찍 깨워야 제시간이 되는가"를 학습
+        self.bias_us = (1 - self.alpha) * self.bias_us + self.alpha * max(0.0, lateness_us)
+        return lateness_us

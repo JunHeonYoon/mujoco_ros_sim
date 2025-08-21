@@ -34,7 +34,7 @@ class MujocoSimNode(Node):
 
         qos = QoSProfile(reliability= ReliabilityPolicy.BEST_EFFORT,
                          history    = HistoryPolicy.KEEP_LAST,
-                         depth      = 1,
+                         depth      = 10,
                          durability = DurabilityPolicy.VOLATILE)
 
         # ROS2 publisher & subscriber

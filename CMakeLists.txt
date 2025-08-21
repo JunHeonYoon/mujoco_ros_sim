@@ -1,90 +1,118 @@
-cmake_minimum_required(VERSION 3.17)
-project(mujoco_ros_sim)
-set(CMAKE_CXX_STANDARD 17)
+cmake_minimum_required(VERSION 3.16)     # cmake ver
+project(mujoco_ros_sim)                  # project name
 
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
-find_package(Boost REQUIRED COMPONENTS
-  python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
-  numpy${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
+if(NOT CMAKE_BUILD_TYPE)                 # default build
+  set(CMAKE_BUILD_TYPE Release )
+endif()
+
+# --- Dependencies (C++) ---
+find_package(ament_cmake REQUIRED)       # ament
+find_package(rclcpp REQUIRED)            # rclcpp
+find_package(pluginlib REQUIRED)         # pluginlib
+find_package(Eigen3 REQUIRED)            # eigen
+find_package(OpenCV REQUIRED)            # opencv
+find_package(cv_bridge REQUIRED)         # cv_bridge
+find_package(Python3 REQUIRED COMPONENTS Development)  # python dev
+find_package(mujoco_ros_sim_msgs REQUIRED)             # msgs
+
+find_package(pybind11 QUIET CONFIG)      # pybind11 (config)
+
+# 2) If not found, try ROS vendor
+if(NOT pybind11_FOUND)                   # fallback vendor
+  find_package(pybind11_vendor QUIET)
+  if(pybind11_vendor_FOUND)
+    find_package(pybind11 REQUIRED CONFIG)  # provided by vendor
+  endif()
+endif()
+
+# 3) We always need the Python dev library for embedding fallback
+find_package(Python3 REQUIRED COMPONENTS Development)  # python dev (again)
+
+# Choose link target: prefer pybind11::embed, else Python3::Python
+set(PYBIND_LINK_TARGET Python3::Python)  # default link
+if(TARGET pybind11::embed)               # prefer embed
+  set(PYBIND_LINK_TARGET pybind11::embed)
+endif()
+
+# --- Includes ---
+include_directories(                      # include dirs
+  include
+  ${EIGEN3_INCLUDE_DIRS}
 )
-find_package(eigenpy REQUIRED)
-find_package(rclcpp  REQUIRED)
-find_package(rclpy  REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc)
-find_package(cv_bridge REQUIRED)
 
-add_library(bindings SHARED 
-            src/bindings.cpp
-            src/ControllerRegistry.cpp)
+# --- Plugin library (PyController adapter) ---
+add_library(MujocoControllerPlugins SHARED  # plugin lib
+  src/PyController.cpp
+)
+ament_target_dependencies(MujocoControllerPlugins  # plugin deps
+  rclcpp pluginlib sensor_msgs std_msgs mujoco_ros_sim_msgs
+)
+target_include_directories(MujocoControllerPlugins PRIVATE ${Python3_INCLUDE_DIRS}) # py inc
+# pybind11 헤더가 있으면 추가
+if(pybind11_FOUND AND DEFINED pybind11_INCLUDE_DIRS)  # pybind inc
+  target_include_directories(MujocoControllerPlugins PRIVATE ${pybind11_INCLUDE_DIRS})
+endif()
 
-set_target_properties(bindings PROPERTIES OUTPUT_NAME bindings)
+target_link_libraries(MujocoControllerPlugins        # plugin link
+  ${PYBIND_LINK_TARGET}
+  ${OpenCV_LIBS}
+)
 
-target_link_options(bindings PUBLIC "-Wl,-export-dynamic")
+# --- Node executable ---
+add_executable(MujocoController            # node exe
+  src/MujocoController.cpp
+)
+ament_target_dependencies(MujocoController # node deps
+  rclcpp pluginlib cv_bridge sensor_msgs std_msgs mujoco_ros_sim_msgs
+)
+target_link_libraries(MujocoController     # node link
+Python3::Python
+  MujocoControllerPlugins
+  ${OpenCV_LIBS}
+)
 
-target_include_directories(bindings PUBLIC
-                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-                           $<INSTALL_INTERFACE:include>
-                           ${Boost_INCLUDE_DIRS} 
-                           ${eigenpy_INCLUDE_DIRS}
-                           ${OpenCV_INCLUDE_DIRS})
+# --- Install (C++ targets) ---
+install(TARGETS MujocoControllerPlugins    # install lib
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+install(TARGETS MujocoController           # install exe
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
 
-target_link_libraries(bindings PUBLIC
-                      Boost::python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
-                      Boost::numpy${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}
-                      eigenpy::eigenpy 
-                      rclcpp::rclcpp
-                      ${OpenCV_LIBS})
+target_link_options(MujocoController PRIVATE -Wl,-E)  # export symbols
 
-add_library(mujoco_ros_sim::bindings ALIAS bindings)
+# --- Headers / Plugin XML ---
+install(DIRECTORY include/ DESTINATION include)               # headers
+install(FILES plugins.xml DESTINATION share/${PROJECT_NAME})  # plugin xml
 
-install(DIRECTORY   include/ 
-        DESTINATION include)
+install(DIRECTORY   launch                                   # launch
+        DESTINATION share/${PROJECT_NAME})
 
-ament_python_install_package(mujoco_ros_sim)
+install(DIRECTORY   mujoco_menagerie                         # assets
+        DESTINATION share/${PROJECT_NAME})
 
-install(PROGRAMS    ${CMAKE_CURRENT_SOURCE_DIR}/mujoco_ros_sim/mujoco_sim.py
+install(FILES       resource/${PROJECT_NAME}                 # ament idx
+        DESTINATION share/ament_index/resource_index/packages)
+
+install(FILES       package.xml                              # package.xml
+        DESTINATION share/${PROJECT_NAME})
+
+ament_python_install_package(mujoco_ros_sim)                 # py pkg
+
+install(PROGRAMS    ${CMAKE_CURRENT_SOURCE_DIR}/mujoco_ros_sim/mujoco_sim.py  # script
         DESTINATION lib/${PROJECT_NAME}
         RENAME      mujoco_sim)
 
-install(PROGRAMS    ${CMAKE_CURRENT_SOURCE_DIR}/mujoco_ros_sim/mujoco_controller.py
-        DESTINATION lib/${PROJECT_NAME}
-        RENAME      mujoco_controller)
+# --- pluginlib export ---
+pluginlib_export_plugin_description_file(mujoco_ros_sim plugins.xml)  # export
 
-install(TARGETS bindings
-        EXPORT  mujoco_ros_simTargets
-        LIBRARY DESTINATION lib)
+# --- Export ---
+ament_export_include_directories(include)   # export inc
+ament_export_dependencies(                  # export deps
+  rclcpp pluginlib Eigen3 OpenCV cv_bridge pybind11_vendor
+  sensor_msgs std_msgs mujoco_ros_sim_msgs
+)
 
-add_custom_command(TARGET  bindings POST_BUILD
-                   COMMAND ${CMAKE_COMMAND} -E copy
-                           $<TARGET_FILE:bindings>
-                           ${CMAKE_CURRENT_BINARY_DIR}/bindings.so
-                   COMMENT "Staging unprefixed Python binding")
-
-install(FILES       ${CMAKE_CURRENT_BINARY_DIR}/bindings.so
-        DESTINATION ${PYTHON_INSTALL_DIR}/mujoco_ros_sim)
-
-install(DIRECTORY   launch           
-        DESTINATION share/${PROJECT_NAME})
-
-install(DIRECTORY   mujoco_menagerie 
-        DESTINATION share/${PROJECT_NAME})
-
-install(FILES       resource/${PROJECT_NAME}
-        DESTINATION share/ament_index/resource_index/packages)
-
-install(FILES       package.xml          
-        DESTINATION share/${PROJECT_NAME})
-
-install(FILES cmake/MRSController.cmake
-        DESTINATION share/${PROJECT_NAME}/cmake)
-
-install(EXPORT      mujoco_ros_simTargets
-        FILE        mujoco_ros_simTargets.cmake
-        NAMESPACE   mujoco_ros_sim::
-        DESTINATION share/${PROJECT_NAME}/cmake)
-
-ament_export_include_directories(include)
-ament_export_libraries(bindings)
-ament_export_targets(mujoco_ros_simTargets)
-ament_package()
+ament_package()                              # ament end
