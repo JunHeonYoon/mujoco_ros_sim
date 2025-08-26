@@ -4,9 +4,11 @@
 #include <pluginlib/class_loader.hpp>
 #include <mutex>
 #include <chrono>
+#include <pthread.h>
+#include <sys/mman.h>
 
-#include "mujoco_ros_sim/ControllerInterface.hpp"   // VecMap, ImageCVMap 등
-#include "mujoco_ros_sim/ControllerFactory.hpp"
+#include "mujoco_ros_sim/controller_interface.hpp"   // VecMap, ImageCVMap ...
+#include "mujoco_ros_sim/controller_factory.hpp"
 
 // msgs
 #include "mujoco_ros_sim_msgs/msg/joint_dict.hpp"
@@ -19,6 +21,7 @@ class ControllerNode : public rclcpp::Node
 {
 public:
   ControllerNode();
+  ~ControllerNode();
   void init_controller();
 
 private:
@@ -55,4 +58,12 @@ private:
 
   // once-start
   bool started_{false};
+
+  std::thread rt_thread_;
+  std::atomic_bool rt_run_{false};
+
+  void run_rt_loop();     // 1kHz 루프(타이머 대체)
+
+  // (선택) 실시간 우선순위 시도 - 실패해도 무시
+  static void try_set_realtime(int prio = 60);
 };

@@ -1,5 +1,6 @@
 from rclpy.node import Node
-from typing import Dict, Any
+from typing import Dict
+import numpy as np
 
 
 class ControllerInterface:
@@ -12,15 +13,15 @@ class ControllerInterface:
 
     def updateState(
         self,
-        pos_dict: Dict[str, Any],
-        vel_dict: Dict[str, Any],
-        tau_ext_dict: Dict[str, Any],
-        sensor_dict: Dict[str, Any],
+        pos_dict: Dict[str, np.ndarray],
+        vel_dict: Dict[str, np.ndarray],
+        tau_ext_dict: Dict[str, np.ndarray],
+        sensor_dict: Dict[str, np.ndarray],
         current_time: float
     ) -> None:
         raise NotImplementedError
     
-    def updateRGBDImage(self, rgbd_dict: Dict[str, Any]) ->None:
+    def updateRGBDImage(self, rgbd_dict: Dict[str, Dict[str, np.ndarray]]) ->None:
         pass
         
     def compute(self) -> None:

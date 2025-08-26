@@ -1,4 +1,4 @@
-#include "mujoco_ros_sim/PyController.hpp"
+#include "mujoco_ros_sim/py_controller.hpp"
 #include <pluginlib/class_list_macros.hpp>
 #include <pybind11/embed.h>
 #include <pybind11/pybind11.h>
@@ -45,7 +45,7 @@ namespace
     static bool inited = false;
     if (!inited) 
     {
-      ::setenv("PYTHONNOUSERSITE", "1", 1);
+      // ::setenv("PYTHONNOUSERSITE", "1", 1);
       py::initialize_interpreter();
 
       // release GIL
@@ -104,14 +104,23 @@ namespace
   }
 
   // image map → dict
-  py::dict imagemap_to_pydict(const ImageCVMap& m) 
+  py::dict imagemap_to_pydict(const ImageCVMap& m)
   {
-    py::dict d;
-    for (const auto& kv : m) d[py::str(kv.first)] = cv_to_np(kv.second);
-    return d;
-  }
+    py::dict out;
+    for (const auto& kv : m)
+    {
+      const std::string& name = kv.first;
+      const RGBDFrame& f = kv.second;
 
-}
+      py::dict pair;
+      if (!f.rgb.empty())   pair[py::str("rgb")]   = cv_to_np(f.rgb);
+      if (!f.depth.empty()) pair[py::str("depth")] = cv_to_np(f.depth);
+
+      out[py::str(name)] = std::move(pair);
+    }
+    return out;
+  }
+};
 
 // numpy view
 static py::object make_numpy_view(std::vector<double>& buf) 

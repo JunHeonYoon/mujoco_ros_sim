@@ -14,7 +14,7 @@ def generate_launch_description():
 
     sim_node = Node(
         package='mujoco_ros_sim',      
-        executable='mujoco_sim',   
+        executable='MujocoSim',   
         name='mujoco_sim_node',
         output='screen',
         parameters=[{

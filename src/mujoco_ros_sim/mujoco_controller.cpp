@@ -1,4 +1,4 @@
-#include "mujoco_ros_sim/MujocoController.hpp"
+#include "mujoco_ros_sim/mujoco_controller.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/core.hpp>
@@ -54,12 +54,12 @@ ControllerNode::ControllerNode()
 : Node("controller_node")
 {
     // param read
-    controller_class_ = declare_parameter<std::string>("controller_class", "mujoco_ros_sim/PyController");
+    controller_class_ = declare_parameter<std::string>("controller_class", "mujoco_ros_sim/py_controller");
 }
 
 void ControllerNode::init_controller() 
 {
-    rclcpp::QoS qos(rclcpp::KeepLast(10));
+    rclcpp::QoS qos(rclcpp::KeepLast(1));
     qos.best_effort();
     qos.durability_volatile();
 
@@ -111,7 +111,7 @@ void ControllerNode::init_controller()
         auto slash = spec.find('/');
         if (slash == std::string::npos) throw std::runtime_error("controller_class must be 'pkg/Class' (got: " + spec + ")");
         python_class = spec.substr(0, slash) + ":" + spec.substr(slash + 1);
-        plugin_to_load = "mujoco_ros_sim/PyController";
+        plugin_to_load = "mujoco_ros_sim/py_controller";
 
         if (!this->has_parameter("python_class")) this->declare_parameter<std::string>("python_class", "");
         if (!this->has_parameter("python_path"))  this->declare_parameter<std::string>("python_path", "");
@@ -145,8 +145,54 @@ void ControllerNode::init_controller()
                     std::bind(&ControllerNode::imageCb, this, std::placeholders::_1), opt);
     ctrl_pub_   = create_publisher<CtrlDict>("mujoco_ros_sim/ctrl_dict", qos);
 
-    timer_ = create_wall_timer(period_ns_, std::bind(&ControllerNode::controlLoop, this), timer_group_);
+    // timer_ = create_wall_timer(period_ns_, std::bind(&ControllerNode::controlLoop, this), timer_group_);
+    // ROS 타이머 대신 고정주기 스레드(지터↓, 1kHz 수렴)
+    rt_run_.store(true, std::memory_order_relaxed);
+    rt_thread_ = std::thread(&ControllerNode::run_rt_loop, this);
 }
+
+ControllerNode::~ControllerNode() 
+{
+  rt_run_.store(false, std::memory_order_relaxed);
+  if (rt_thread_.joinable()) rt_thread_.join();
+}
+
+void ControllerNode::run_rt_loop() 
+{
+    using clock = std::chrono::steady_clock;
+    // (선택) 실시간 스케줄링/메모리 잠금 시도
+    try_set_realtime(60);
+
+    const auto period = period_ns_;
+    auto next = clock::now();
+
+    while (rt_run_.load(std::memory_order_relaxed) && rclcpp::ok()) 
+    {
+        next += period;
+
+        // 기존 제어 1 step
+        controlLoop();
+
+        // 절대 데드라인까지 슬립 (지터 최소화)
+        std::this_thread::sleep_until(next);
+
+        // 백로그가 쌓였으면 누적 보정
+        while (clock::now() > next + period) next += period;
+    }
+}
+
+void ControllerNode::try_set_realtime(int prio) 
+{
+    // 메모리 스와핑 방지 시도 (실패해도 무시)
+    mlockall(MCL_CURRENT | MCL_FUTURE);
+
+    sched_param sp{};
+    sp.sched_priority = prio;
+    pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);  // 권한 없으면 실패해도 진행
+    // CPU 고정 등 더 하려면 pthread_setaffinity_np(...) 사용 가능
+}
+
+
 
 void ControllerNode::jointCb(const JointDict::SharedPtr msg)
 {
@@ -186,21 +232,41 @@ void ControllerNode::sensorCb(const SensorDict::SharedPtr msg)
 
 void ControllerNode::imageCb(const ImageDict::SharedPtr msg)
 {
-    try 
+  try
+  {
+    ImageCVMap imgs;
+    imgs.reserve(msg->images.size());
+
+    for (const auto& ni : msg->images)
     {
-        // images
-        ImageCVMap imgs;
-        imgs.reserve(msg->images.size());
-        for (const auto& ni : msg->images) imgs.emplace(ni.name, cvMatFromImageMsg(ni.image));
-        controller_->updateRGBDImage(imgs);
-        (void)msg->sim_time; // maybe use
-    } 
-    catch (const std::exception& e) 
-    {
-        // warn
-        RCLCPP_WARN(get_logger(), "imageCb error: %s", e.what());
+      RGBDFrame f;
+
+      // RGB
+      f.rgb = cvMatFromImageMsg(ni.rgb_image);  // CV_8UC3 (rgb8/bgr8 등)
+
+      // Depth
+      if (!ni.depth_image.data.empty()) 
+      {
+        // 32FC1 or 16UC1 -> cv::Mat
+        f.depth = cvMatFromImageMsg(ni.depth_image);
+      } 
+      else 
+      {
+        f.depth.release();
+      }
+
+      imgs.emplace(ni.name, std::move(f));
     }
+
+    controller_->updateRGBDImage(imgs);
+    (void)msg->sim_time;
+  }
+  catch (const std::exception& e)
+  {
+    RCLCPP_WARN(get_logger(), "imageCb error: %s", e.what());
+  }
 }
+
 
 void ControllerNode::controlLoop()
 {

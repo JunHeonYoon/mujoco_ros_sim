@@ -1,6 +1,6 @@
 #pragma once
-#include "mujoco_ros_sim/ControllerInterface.hpp"
-#include "mujoco_ros_sim/ControllerFactory.hpp"
+#include "mujoco_ros_sim/controller_interface.hpp"
+#include "mujoco_ros_sim/controller_factory.hpp"
 #include <memory>
 
 class PyController final : public ControllerInterface 

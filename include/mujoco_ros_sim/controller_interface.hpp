@@ -14,11 +14,18 @@ constexpr const char* cblue_  = "\033[0;34m";
 constexpr const char* cgreen_ = "\033[0;32m";
 constexpr const char* cyellow_= "\033[0;33m";
 
+struct RGBDFrame 
+{
+  cv::Mat rgb;    // CV_8UC3, BGR/RGB 
+  cv::Mat depth;  // CV_32FC1 (m) or CV_16UC1 (mm)
+};
+
+
 using Vec          = Eigen::VectorXd;
 using VecMap       = std::unordered_map<std::string, Vec>;
 using VecMap       = std::unordered_map<std::string, Vec>;
 using CtrlInputMap = std::unordered_map<std::string, double>;
-using ImageCVMap   = std::unordered_map<std::string, cv::Mat>;
+using ImageCVMap   = std::unordered_map<std::string, RGBDFrame>;
 
 /**
  * @brief Minimal controller interface for mujoco_ros_sim.

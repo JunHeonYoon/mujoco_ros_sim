@@ -1,7 +1,7 @@
 #pragma once
 #include <memory>
 #include <rclcpp/rclcpp.hpp>
-#include "mujoco_ros_sim/ControllerInterface.hpp"
+#include "mujoco_ros_sim/controller_interface.hpp"
 
 
 class ControllerFactory 
