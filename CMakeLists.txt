@@ -117,9 +117,10 @@ ament_target_dependencies(MujocoController # node deps
   rclcpp pluginlib cv_bridge sensor_msgs std_msgs mujoco_ros_sim_msgs
 )
 target_link_libraries(MujocoController     # node link
-Python3::Python
+  Python3::Python
   MujocoControllerPlugins
   ${OpenCV_LIBS}
+  mujoco::mujoco
 )
 
 # --- Install (C++ targets) ---

@@ -1,4 +1,5 @@
 #include "mujoco_ros_sim/mujoco_controller.hpp"
+#include "mujoco_ros_sim/utils.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/core.hpp>

@@ -1,4 +1,5 @@
 #include "mujoco_ros_sim/mujoco_sim.hpp"
+#include "mujoco_ros_sim/utils.hpp"
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp/qos.hpp>
@@ -125,6 +126,9 @@ MujocoSimNode::MujocoSimNode()
     throw std::runtime_error("no model/data");
   }
 
+  RCLCPP_INFO(get_logger(), "%s%s%s", cblue_, print_table(model_xml_, model_).c_str(), creset_);
+  
+
   // dt/딕셔너리
   {
     const std::unique_lock<std::recursive_mutex> lk(sim_->mtx);
@@ -152,7 +156,7 @@ MujocoSimNode::MujocoSimNode()
     });
   }
 
-  RCLCPP_INFO(get_logger(), "MuJoCo UI started with model: %s (dt=%.6f)", xml.c_str(), dt_);
+  RCLCPP_INFO(get_logger(), "MuJoCo UI started with model: %s (dt=%.6f)", model_xml_.c_str(), dt_);
 }
 
 MujocoSimNode::~MujocoSimNode() {
