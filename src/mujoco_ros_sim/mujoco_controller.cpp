@@ -1,5 +1,4 @@
 #include "mujoco_ros_sim/mujoco_controller.hpp"
-#include "mujoco_ros_sim/utils.hpp"
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/core.hpp>
@@ -128,7 +127,7 @@ void ControllerNode::init_controller()
         controller_  = factory->create(shared_from_this());
     }
 
-    RCLCPP_INFO(get_logger(), "%sController loaded: %s%s", cblue_, plugin_to_load.c_str(), creset_);
+    RCLCPP_INFO(get_logger(), "%sController loaded: %s%s", "\033[0;34m", plugin_to_load.c_str(), "\033[0m");
 
     const double dt = controller_->getCtrlTimeStep();
     period_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(dt));

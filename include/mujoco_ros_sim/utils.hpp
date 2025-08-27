@@ -4,13 +4,6 @@
 #include <iomanip>
 #include <unordered_map>
 
-constexpr const char* cred_   = "\033[0;31m";
-constexpr const char* creset_ = "\033[0m";
-constexpr const char* cblue_  = "\033[0;34m";
-constexpr const char* cgreen_ = "\033[0;32m";
-constexpr const char* cyellow_= "\033[0;33m";
-
-
 static inline const char* name_or(const mjModel* m, int objtype, int id) {
   const char* n = mj_id2name(m, objtype, id);
   return n ? n : "-";

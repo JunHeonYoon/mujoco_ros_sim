@@ -91,6 +91,7 @@ include_directories(                      # include dirs
   ${EIGEN3_INCLUDE_DIRS}
 )
 
+
 # --- Plugin library (PyController adapter) ---
 add_library(MujocoControllerPlugins SHARED  # plugin lib
   src/mujoco_ros_sim/py_controller.cpp
@@ -120,7 +121,6 @@ target_link_libraries(MujocoController     # node link
   Python3::Python
   MujocoControllerPlugins
   ${OpenCV_LIBS}
-  mujoco::mujoco
 )
 
 # --- Install (C++ targets) ---

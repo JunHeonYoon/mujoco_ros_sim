@@ -126,7 +126,7 @@ MujocoSimNode::MujocoSimNode()
     throw std::runtime_error("no model/data");
   }
 
-  RCLCPP_INFO(get_logger(), "%s%s%s", cblue_, print_table(model_xml_, model_).c_str(), creset_);
+  RCLCPP_INFO(get_logger(), "%s%s%s", "\033[0;34m", print_table(model_xml_, model_).c_str(), "\033[0m");
   
 
   // dt/딕셔너리
