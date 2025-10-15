@@ -3,7 +3,7 @@
   <name>mujoco_ros_sim</name>
   <version>0.0.1</version>
   <description>ControllerInterface + factory + Python adapter + loader node + MuJoCo sim runner</description>
-  <maintainer email="you@example.com">You</maintainer>
+  <maintainer email="yoonjh98@snu.ac.kr">JunheonYoon</maintainer>
   <license>MIT</license>
 
   <!-- Build -->
@@ -17,7 +17,6 @@
   <depend>eigen3_cmake_module</depend>
   <depend>OpenCV</depend>
   <depend>cv_bridge</depend>
-  <depend>mujoco_ros_sim_msgs</depend>
 
   <!-- Python runtime deps for mujoco_sim.py -->
   <exec_depend>rclpy</exec_depend>

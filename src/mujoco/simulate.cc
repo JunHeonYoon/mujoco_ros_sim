@@ -27,7 +27,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "mujoco/lodepng.h"
+#include "lodepng.h"
 #include <mujoco/mjdata.h>
 #include <mujoco/mjui.h>
 #include <mujoco/mjvisualize.h>
@@ -647,7 +647,7 @@ void UpdateInfoText(mj::Simulate* sim, const mjModel* m, const mjData* d,
     }
 
     // add islands if enabled
-    if (mjENABLED(mjENBL_ISLAND)) {
+    if (!mjDISABLED(mjDSBL_ISLAND) && d->nisland > 0) {
       mju::sprintf_arr(tmp, "\n%d", d->nisland);
       mju::strcat_arr(content, tmp);
       mju::strcat_arr(title, "\nIslands");
@@ -2500,9 +2500,6 @@ void Simulate::Render() {
     if (this->ui1_enable) {
       mjui_render(&this->ui1, &this->uistate, &this->platform_ui->mjr_context());
     }
-    if (this->post_render_cb_) {
-      this->post_render_cb_();
-    }
 
     // finalize
     this->platform_ui->SwapBuffers();
@@ -2743,10 +2740,6 @@ void Simulate::Render() {
   }
   for (auto& [viewport, image] : this->user_images_) {
     ShowImage(this, viewport, image.get());
-  }
-
-  if (post_render_cb_) {
-    post_render_cb_();
   }
 
   // finalize

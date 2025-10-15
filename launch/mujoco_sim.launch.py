@@ -14,12 +14,13 @@ def generate_launch_description():
 
     sim_node = Node(
         package='mujoco_ros_sim',      
-        executable='MujocoSim',   
+        executable='MujocoRosSim',   
         name='mujoco_sim_node',
         output='screen',
         parameters=[{
             'robot_name': robot_name
-        }]
+        }],
+        # prefix='gdb -ex run --args'
     )
 
     return LaunchDescription([

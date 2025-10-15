@@ -3,12 +3,14 @@
 #include <rclcpp/rclcpp.hpp>
 #include "mujoco_ros_sim/controller_interface.hpp"
 
-
-class ControllerFactory 
+namespace MujocoRosSim
 {
-public:
-  virtual ~ControllerFactory() = default;
-  virtual std::shared_ptr<ControllerInterface>
-  create(const rclcpp::Node::SharedPtr& node) = 0;
-};
+  class ControllerFactory 
+  {
+  public:
+    virtual ~ControllerFactory() = default;
+    virtual std::shared_ptr<ControllerInterface>
+    create(const rclcpp::Node::SharedPtr& node) = 0;
+  };
+} // namespace MujocoRosSim
 
