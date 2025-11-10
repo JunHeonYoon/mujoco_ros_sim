@@ -422,7 +422,7 @@ namespace MujocoRosSim
                         sim.speed_changed = false;
 
                         // inject noise
-                        sim.InjectNoise();
+                        sim.InjectNoise(sim.key);
 
                         // run single step, let next iteration deal with timing
                         mj_step(model_, data_);
@@ -459,7 +459,7 @@ namespace MujocoRosSim
                             }
 
                             // inject noise
-                            sim.InjectNoise();
+                            sim.InjectNoise(sim.key);
 
                             // call mj_step
                             mj_step(model_, data_);

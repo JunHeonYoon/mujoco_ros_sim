@@ -26,7 +26,6 @@
 #include <tuple>
 #include <utility>
 #include <vector>
-#include <functional>
 
 #include <mujoco/mjui.h>
 #include <mujoco/mujoco.h>
@@ -90,10 +89,7 @@ class Simulate {
   void AddToHistory();
 
   // inject control noise
-  void InjectNoise();
-
-  using PostRenderCallback = std::function<void()>;
-  void SetPostRenderCallback(PostRenderCallback cb) { post_render_cb_ = std::move(cb); }
+  void InjectNoise(int key);
 
   // constants
   static constexpr int kMaxFilenameLength = 1000;
@@ -203,7 +199,7 @@ class Simulate {
   int busywait = 0;
 
   // keyframe index
-  int key = 0;
+  int key = -1;
 
   // index of history-scrubber slider
   int scrub_index = 0;
@@ -351,9 +347,6 @@ class Simulate {
   int texture_upload_ = -1;
   int mesh_upload_ = -1;
   int hfield_upload_ = -1;
-
-  private:
-  PostRenderCallback post_render_cb_;
 };
 }  // namespace mujoco
 
