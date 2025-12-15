@@ -1,4 +1,7 @@
 #include "mujoco_ros_sim/mujoco_ros_sim.hpp"
+
+MujocoRosSim::MujocoRosSimNode* MujocoRosSim::MujocoRosSimNode::s_node_ = nullptr;
+
 namespace MujocoRosSim
 {
     MujocoRosSimNode::MujocoRosSimNode()
@@ -27,6 +30,20 @@ namespace MujocoRosSim
             LOGE(this, "Headers and library have different versions");
         }
 
+        // --- install MuJoCo callbacks for warnings/errors ---
+        s_node_ = this;
+
+        #if defined(mjcb_warning) || defined(MJ_HAVE_CB_WARNING)
+        // Some MuJoCo builds expose mjcb_warning/mjcb_error.
+        // If not available, we fallback to loadError logging.
+        ::mjcb_warning = &MujocoRosSimNode::mjWarningCallback;
+        ::mjcb_error   = &MujocoRosSimNode::mjErrorCallback;
+        LOGI(this, "MuJoCo error/warning callbacks installed.");
+        #else
+        LOGW(this, "This MuJoCo build does not expose mjcb_warning/mjcb_error. Falling back to loadError logging only.");
+        #endif
+
+
         // plugin scan
         scanPluginLibraries();
 
@@ -46,6 +63,12 @@ namespace MujocoRosSim
         if (xml.empty()) 
         {
             LOGE(this, "Model XML not found (robot_name or model_xml).");
+            throw std::runtime_error("model not found");
+        }
+        
+        if (!std::filesystem::exists(std::filesystem::path(xml))) 
+        {
+            LOGE(this, "There is no MJCF file at %s.", xml.c_str());
             throw std::runtime_error("model not found");
         }
 
@@ -73,6 +96,80 @@ namespace MujocoRosSim
             const std::unique_lock<std::recursive_mutex> lk(sim_->mtx);
             if (data_)  { mj_deleteData(data_);  data_  = nullptr; }
             if (model_) { mj_deleteModel(model_); model_ = nullptr; }
+        }
+    }
+
+    std::string MujocoRosSimNode::joinList(const std::vector<std::string>& v, const std::string& sep)
+    {
+        std::ostringstream oss;
+        for (size_t i = 0; i < v.size(); ++i)
+        {
+            oss << v[i];
+            if (i + 1 < v.size()) oss << sep;
+        }
+        return oss.str();
+    }
+
+    std::vector<std::string> MujocoRosSimNode::listMenagerieRobots() const
+    {
+        std::vector<std::string> out;
+        try
+        {
+            const auto share = ament_index_cpp::get_package_share_directory("mujoco_ros_sim");
+            const std::filesystem::path menagerie = std::filesystem::path(share) / "mujoco_menagerie";
+
+            if (!std::filesystem::exists(menagerie) || !std::filesystem::is_directory(menagerie))
+            {
+                LOGE(this, "mujoco_menagerie directory not found: %s", menagerie.string().c_str());
+                return out;
+            }
+
+            for (const auto& entry : std::filesystem::directory_iterator(menagerie))
+            {
+                if (!entry.is_directory()) continue;
+                out.push_back(entry.path().filename().string());
+            }
+
+            std::sort(out.begin(), out.end());
+        }
+        catch (const std::exception& e)
+        {
+            LOGE(this, "Failed to list mujoco_menagerie robots: %s", e.what());
+        }
+        catch (...)
+        {
+            LOGE(this, "Failed to list mujoco_menagerie robots: unknown error");
+        }
+
+        return out;
+    }
+
+    void MujocoRosSimNode::mjWarningCallback(const char* msg)
+    {
+        // Called by MuJoCo on warnings (e.g., compiler warnings, numerical issues)
+        if (s_node_)
+        {
+            s_node_->last_mj_warning_ = (msg ? msg : "");
+            LOGW(s_node_, "[MuJoCo WARNING] %s", msg ? msg : "(null)");
+        }
+        else
+        {
+            std::fprintf(stderr, "[MuJoCo WARNING] %s\n", msg ? msg : "(null)");
+        }
+    }
+
+    void MujocoRosSimNode::mjErrorCallback(const char* msg)
+    {
+        // Called by MuJoCo right before it throws/aborts on fatal errors
+        // This is important for seeing XML parse errors similar to the simulate UI.
+        if (s_node_)
+        {
+            s_node_->last_mj_error_ = (msg ? msg : "");
+            LOGE(s_node_, "[MuJoCo ERROR] %s", msg ? msg : "(null)");
+        }
+        else
+        {
+            std::fprintf(stderr, "[MuJoCo ERROR] %s\n", msg ? msg : "(null)");
         }
     }
 
@@ -240,9 +337,23 @@ namespace MujocoRosSim
         auto load_interval = mj::Simulate::Clock::now() - load_start;
         double load_seconds = Seconds(load_interval).count();
 
+        // if (!mnew)
+        // {
+        //     std::printf("%s\n", loadError);
+        //     mju::strcpy_arr(sim.load_error, loadError);
+        //     return nullptr;
+        // }
         if (!mnew)
         {
+            // Print to stdout/stderr
             std::printf("%s\n", loadError);
+
+            // Also log to ROS console (important in roslaunch/colcon environments)
+            if (s_node_)
+            {
+                LOGE(s_node_, "[MJCF LOAD FAILED] %s", loadError);
+            }
+
             mju::strcpy_arr(sim.load_error, loadError);
             return nullptr;
         }
@@ -268,38 +379,52 @@ namespace MujocoRosSim
 
     void MujocoRosSimNode::PhysicsThread(mj::Simulate* sim, std::string filename) 
     {
-        // request loadmodel if file given (otherwise drag-and-drop)
-        if (!filename.empty())
+        try
         {
-            sim->LoadMessage(filename.c_str());
-            model_ = LoadModel(filename.c_str(), *sim);
-            if (model_) 
+            // request loadmodel if file given (otherwise drag-and-drop)
+            if (!filename.empty())
             {
-                // lock the sim mutex
-                const std::unique_lock<std::recursive_mutex> lock(sim->mtx);
-                data_ = mj_makeData(model_);
+                sim->LoadMessage(filename.c_str());
+                model_ = LoadModel(filename.c_str(), *sim);
+                if (model_) 
+                {
+                    // lock the sim mutex
+                    const std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+                    data_ = mj_makeData(model_);
+                }
+                if (data_) 
+                {
+                    sim->Load(model_, data_, filename.c_str());
+                    // lock the sim mutex
+                    const std::unique_lock<std::recursive_mutex> lock(sim->mtx);
+                    mj_forward(model_, data_);
+    
+                } 
+                else 
+                {
+                    sim->LoadMessageClear();
+                }
+    
+                dt_ = model_->opt.timestep;
+    
+                buildSlices();
+                LOGI(this, PrintTable(robot_name_, model_).c_str());
+                is_mujoco_ready_ = true;
+    
+                PhysicsLoop(*sim);
             }
-            if (data_) 
-            {
-                sim->Load(model_, data_, filename.c_str());
-                // lock the sim mutex
-                const std::unique_lock<std::recursive_mutex> lock(sim->mtx);
-                mj_forward(model_, data_);
-
-            } 
-            else 
-            {
-                sim->LoadMessageClear();
-            }
-
-            dt_ = model_->opt.timestep;
-
-            buildSlices();
-            LOGI(this, PrintTable(robot_name_, model_).c_str());
-            is_mujoco_ready_ = true;
-
-            PhysicsLoop(*sim);
         }
+        catch (const std::exception& e)
+        {
+            LOGE(this, "PhysicsThread exception: %s", e.what());
+            if (sim_) sim_->run = 0;
+        }
+        catch (...)
+        {
+            LOGE(this, "PhysicsThread unknown exception");
+            if (sim_) sim_->run = 0;
+        }
+        
     }
 
     void MujocoRosSimNode::PhysicsLoop(mj::Simulate& sim) 
@@ -317,6 +442,17 @@ namespace MujocoRosSim
                 sim.LoadMessage(sim.dropfilename);
                 mjModel* mnew = LoadModel(sim.dropfilename, sim);
                 sim.droploadrequest.store(false);
+
+                if (!mnew)
+                {
+                    // Keep existing model/data; just show error and pause.
+                    LOGE(this, "Drag&Drop load failed for file: %s", sim.dropfilename);
+                    LOGE(this, "MuJoCo load_error: %s", sim.load_error);
+                    sim.run = 0;               // pause on error (simulate UI behavior)
+                    sim.LoadMessageClear();    // clear UI message
+                    is_mujoco_ready_ = (model_ && data_);
+                    continue;
+                }
 
                 mjData* dnew = nullptr;
                 if (mnew) dnew = mj_makeData(mnew);
@@ -350,6 +486,18 @@ namespace MujocoRosSim
                 sim.LoadMessage(sim.filename);
                 mjModel* mnew = LoadModel(sim.filename, sim);
                 mjData* dnew = nullptr;
+
+                if (!mnew)
+                {
+                    // Keep existing model/data; just show error and pause.
+                    LOGE(this, "Drag&Drop load failed for file: %s", sim.dropfilename);
+                    LOGE(this, "MuJoCo load_error: %s", sim.load_error);
+                    sim.run = 0;               // pause on error (simulate UI behavior)
+                    sim.LoadMessageClear();    // clear UI message
+                    is_mujoco_ready_ = (model_ && data_);
+                    continue;
+                }
+
                 if (mnew) dnew = mj_makeData(mnew);
                 if (dnew) 
                 {
@@ -505,22 +653,101 @@ namespace MujocoRosSim
         }
     }
 
-    std::string MujocoRosSimNode::resolveModelPath() const 
+    // std::string MujocoRosSimNode::resolveModelPath() const 
+    // {
+    //     if (!model_xml_.empty()) return model_xml_;
+    //     if (!robot_name_.empty()) 
+    //     {
+    //         try 
+    //         {
+    //             const auto share = ament_index_cpp::get_package_share_directory("mujoco_ros_sim");
+    //             return share + "/mujoco_menagerie/" + robot_name_ + "/scene.xml";
+    //         } 
+    //         catch (...) 
+    //         {
+    //         }
+    //     }
+    //     return "";
+    // }
+
+    std::string MujocoRosSimNode::resolveModelPath() const
     {
-        if (!model_xml_.empty()) return model_xml_;
-        if (!robot_name_.empty()) 
+        // 1) If model_xml is explicitly provided, prefer it.
+        if (!model_xml_.empty())
         {
-            try 
+            if (!std::filesystem::exists(model_xml_))
             {
-                const auto share = ament_index_cpp::get_package_share_directory("mujoco_ros_sim");
-                return share + "/mujoco_menagerie/" + robot_name_ + "/scene.xml";
-            } 
-            catch (...) 
-            {
+                LOGE(this, "model_xml parameter points to a non-existing file: %s", model_xml_.c_str());
             }
+            return model_xml_;
         }
+
+        // 2) If robot_name is provided, verify that it exists under mujoco_menagerie.
+        if (!robot_name_.empty())
+        {
+            std::string share;
+            try
+            {
+                share = ament_index_cpp::get_package_share_directory("mujoco_ros_sim");
+            }
+            catch (...)
+            {
+                LOGE(this, "Failed to get package share directory for 'mujoco_ros_sim'. Is the package installed?");
+                return "";
+            }
+
+            const std::filesystem::path menagerie = std::filesystem::path(share) / "mujoco_menagerie";
+            const std::filesystem::path robot_dir = menagerie / robot_name_;
+            const std::filesystem::path scene_xml = robot_dir / "scene.xml";
+
+            // Read available robot list for better error message
+            const auto robots = listMenagerieRobots();
+
+            // If robot folder doesn't exist -> print the folder list and fail fast
+            if (!std::filesystem::exists(robot_dir) || !std::filesystem::is_directory(robot_dir))
+            {
+                LOGE(this,
+                    "robot_name '%s' was not found under: %s",
+                    robot_name_.c_str(), menagerie.string().c_str());
+
+                if (!robots.empty())
+                {
+                    LOGE(this, "Available robot folders under mujoco_menagerie (%zu):", robots.size());
+                    // Print in multiple lines to avoid super long single line logs
+                    for (const auto& r : robots)
+                    {
+                        LOGE(this, "  - %s", r.c_str());
+                    }
+                }
+                else
+                {
+                    LOGE(this, "No robot folders were found under mujoco_menagerie.");
+                }
+
+                LOGE(this,
+                    "You must set robot_name to one of the folders above, and that folder must contain 'scene.xml' (e.g. %s/<robot_name>/scene.xml).",
+                    menagerie.string().c_str());
+                return "";
+            }
+
+            // Folder exists but scene.xml missing -> explicit hint
+            if (!std::filesystem::exists(scene_xml))
+            {
+                LOGE(this,
+                    "robot_name '%s' folder exists but 'scene.xml' is missing: %s",
+                    robot_name_.c_str(), scene_xml.string().c_str());
+                LOGE(this, "That folder must contain a valid MJCF file named 'scene.xml'.");
+                return "";
+            }
+
+            return scene_xml.string();
+        }
+
+        // 3) Otherwise fail
+        LOGE(this, "Neither 'model_xml' nor 'robot_name' was provided.");
         return "";
     }
+
 
     void MujocoRosSimNode::buildSlices() 
     {

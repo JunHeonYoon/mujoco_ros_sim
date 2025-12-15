@@ -12,6 +12,9 @@
 #include <new>
 #include <string>
 #include <thread>
+#include <filesystem>
+#include <sstream>
+#include <algorithm>
 
 #include <mujoco/mujoco.h>
 #include "mujoco/glfw_adapter.h"
@@ -37,6 +40,7 @@ extern "C"
     #include <errno.h>
     #include <unistd.h>
 }
+
 
 namespace MujocoRosSim
 {
@@ -79,6 +83,18 @@ namespace MujocoRosSim
             std::atomic<bool> offscreen_ready_{false}; // init barrier
 
         private:
+            // ==================================== Debug helpers ====================================
+            static MujocoRosSimNode* s_node_;
+            std::vector<std::string> listMenagerieRobots() const;
+            static std::string joinList(const std::vector<std::string>& v, const std::string& sep);
+
+            // MuJoCo global callbacks (need static)
+            static void mjWarningCallback(const char* msg);
+            static void mjErrorCallback(const char* msg);
+
+            // Optionally keep last error strings for UI/console
+            std::string last_mj_warning_;
+            std::string last_mj_error_;
             // ==================================== For MuJoCo Controller =================================================
             // plugin loader 
             std::shared_ptr<ControllerInterface> controller_{nullptr};
