@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <sstream>
 #include <algorithm>
+#include <dlfcn.h>
 
 #include <mujoco/mujoco.h>
 #include "mujoco/glfw_adapter.h"
